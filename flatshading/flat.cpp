@@ -8,12 +8,12 @@ using namespace tinygraphics;
 
 const int max_width = 1000;
 const int max_height = 1000;
-void triangle(Vec3f* t, float* zbuffer, TGAImage& image, const TGAColor& color) {
+void triangle(Vec3f* vert, float* zbuffer, Vec3f* texcoords, TGAImage& tex, float intensity, TGAImage& image) {
     // find bounding box first
     auto bottomLeft = Vec2i(INT_MAX, INT_MAX);
     auto topRight = Vec2i(0, 0);
     for (int i = 0; i < 3; i++) {
-        auto& v = t[i];
+        auto& v = vert[i];
         bottomLeft.x = std::max(std::min(bottomLeft.x, (int)v.x), 0);
         bottomLeft.y = std::max(std::min(bottomLeft.y, (int)v.y), 0);
         topRight.x = std::min(std::max(topRight.x, (int)v.x), max_width);
@@ -22,17 +22,40 @@ void triangle(Vec3f* t, float* zbuffer, TGAImage& image, const TGAColor& color) 
 
     for (int x = bottomLeft.x; x <= topRight.x; x++) {
         for (int y = bottomLeft.y; y <= topRight.y; y++) {
-            Vec2i ti[3] = {{(int)t[0].x, (int)t[0].y},{(int)t[1].x, (int)t[1].y},{(int)t[2].x, (int)t[2].y}};
+            Vec2i ti[3] = {
+                {(int)vert[0].x, (int)vert[0].y},
+                {(int)vert[1].x, (int)vert[1].y},
+                {(int)vert[2].x, (int)vert[2].y}
+            };
+
             Vec3f u = barycentric(ti, Vec2i{x, y});
-            float z = 0.0;
             //check if this point is outside the triangle
             if (u.x < 0.0f || u.y < 0.0f || u.z < 0.0f) continue;
 
-            for (int i = 0; i < 3; i++) z +=  u.raw[i] * t[i].z;
+            float z = 0.0;
+            Vec3f texcoord;
+            for (int i = 0; i < 3; i++) {
+                //interpolate z
+                z +=  u.raw[i] * vert[i].z;
+                //interpolate tex coords
+                for (int j = 0; j < 3; j++) {
+                    texcoord.raw[i] += u.raw[j] * texcoords[j].raw[i];
+                }
+            }
+
+            TGAColor color = tex.get(
+                tex.get_width() * texcoord.x,
+                tex.get_height() * texcoord.y
+            );
 
             if (zbuffer[y*image.get_width() + x] < z) {
                 zbuffer[y*image.get_width() + x] = z;
-                image.set(x, y, color);
+                image.set(x, y, TGAColor(
+                    color.r * intensity,
+                    color.g * intensity,
+                    color.b * intensity,
+                    color.a
+                ));
             }
         }
     }
@@ -43,6 +66,9 @@ int main() {
     int height = 500;
     TGAImage img(width, height, TGAImage::RGB);
     TGAImage zimg(width, height, TGAImage::RGB);
+    TGAImage texture;
+    texture.read_tga_file("../res/african_head_diffuse.tga");
+    texture.flip_vertically();
 
     float zbuffer[width * height];
     for (int j = 0; j < width*height; j++) {
@@ -56,9 +82,14 @@ int main() {
         auto face = model.face(i);
         Vec3f screen_coords[3];
         Vec3f world_coords[3];
-        //do model space to screen space transform
+        Vec3f tex_coords[3];
+       
+        // foreach vertex in a triangle
         for (int j = 0; j < 3; j++) {
-            world_coords[j] = model.vert(face[j]);
+            const auto [vert_idx, tex_idx] = face[j];
+            world_coords[j] = model.vert(vert_idx);
+            tex_coords[j] = model.tex(tex_idx);
+            //do model space to screen space transform
             screen_coords[j] = Vec3f(
                 (world_coords[j].x + 1.0) * width / 2.0f,
                 (world_coords[j].y + 1.0) * height / 2.0f,
@@ -69,14 +100,13 @@ int main() {
         Vec3f n = (world_coords[2] - world_coords[0]) ^ (world_coords[1] - world_coords[0]);
         n.normalize();
         float shade = n*light;
-        TGAColor color(255*shade, 255*shade, 255*shade, 255);
         
         ///----- Not so good back surface removeal
         /// if (shade > 0)
         ///    triangle(screen_coords, img, color);
         ///------
 
-        triangle(screen_coords, zbuffer, img, color);
+        triangle(screen_coords, zbuffer, tex_coords, texture, shade, img);
     }
 
     for (int j = 0; j < width*height; j++) {
