@@ -66,6 +66,41 @@ void triangle(Vec3f* vert, float* zbuffer, Vec3f* texcoords, TGAImage& tex, floa
     }
 }
 
+Matrix lookAt(const Vec3f& center, const Vec3f& eye, const Vec3f& up) {
+    //construct an orthognal coordinate system which origin is at 'eye'
+    // and z is eye-center
+    Vec3f z = (eye - center).normalize();
+    Vec3f x = (up ^ z).normalize();
+    Vec3f y = (z ^ x).normalize();
+
+    //note that the matrix representation in this project is row major, that 
+    //is, m[i] is a row, m[0..4][0] is the first column.
+    //to construct a camera transformation matrix which transform any point p
+    //in original system to the camera system. we can consider the fact that the
+    //new coordinate of p' is equivalent to project the p onto each basis of the new coord system.
+    //to project any vector onto another vector, we can just do a simple dot product, that is
+    //equivalent to make the x^,y^,z^ of camera coordinate system as the first 3 row of the matrix. 
+    Matrix view = Matrix::identity(4);
+    view[0][0] = x.x;
+    view[0][1] = x.y;
+    view[0][2] = x.z;
+
+    view[1][0] = y.x;
+    view[1][1] = y.y;
+    view[1][2] = y.z;
+
+    view[2][0] = z.x;
+    view[2][1] = z.y;
+    view[2][2] = z.z;
+
+    Matrix translate = Matrix::identity(4);
+    translate[0][3] = -eye.x;
+    translate[1][3] = -eye.y;
+    translate[2][3] = -eye.z;
+
+    return view * translate;
+}
+
 int main() {
     int width = 501;
     int height = 501;
@@ -83,14 +118,19 @@ int main() {
     Model model("../res/african_head.obj");
     Vec3f light{0, 0, -1};
 
-    float c = 0.8f;
-    Vec3f camera{0, 0, c};
+    //c is equivalent to the focal length (the distance between the pinhole and the projection plane)
+    //that is, the smaller the c is the larger the FOV will be and strongger the perspective effect.
+    float c = 0.5f;
+
     Matrix projection;
     projection[0][0] = 1.0f;
     projection[1][1] = 1.0f;
     projection[2][2] = 1.0f;
     projection[3][3] = 1.0f;
     projection[3][2] = -1.0f/c;
+
+    Vec3f camera{0.15f, 0.05f, 0.6f};
+    Matrix view = lookAt({0.0f, 0.0f, -0.01f}, camera, {0.0f, 1.0f, 0.0f});
 
     for (int i = 0; i < model.nfaces(); ++i) {
         auto face = model.face(i);
@@ -111,7 +151,7 @@ int main() {
             c[2][0] = world_coords[j].raw[2];
             c[3][0] = 1.0f;
 
-            Matrix p = projection * c;
+            Matrix p = projection * view * c;
             world_coords[j].x = p[0][0] / p[3][0];
             world_coords[j].y = p[1][0] / p[3][0];
 
