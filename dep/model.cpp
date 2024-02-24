@@ -25,14 +25,20 @@ Model::Model(const char *filename) : verts_(), faces_() {
             Vec3f uv;
             for (int i = 0; i < 3; i++) iss >> uv.raw[i];
             texcoords_.push_back(uv);
+        } else if (!line.compare(0, 2, "vn")) {
+            Vec3f n;
+            iss >> trash >> trash;
+            for (int i = 0; i < 3; i++) iss >> n.raw[i];
+            norm_.push_back(n);
         } else if (!line.compare(0, 2, "f ")) {
-            std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/>> f;
-            int vert_idx, tex_idx, itrash;
+            std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/, int /*norm idx*/>> f;
+            int vert_idx, tex_idx, norm_idx;
             iss >> trash;
-            while (iss >> vert_idx >> trash >> tex_idx >> trash >> itrash) {
+            while (iss >> vert_idx >> trash >> tex_idx >> trash >> norm_idx) {
                 vert_idx--; // in wavefront obj all indices start at 1, not zero
                 tex_idx--;
-                f.push_back({vert_idx, tex_idx});
+                norm_idx--;
+                f.push_back({vert_idx, tex_idx, norm_idx});
             }
             faces_.push_back(f);
         }
@@ -51,7 +57,7 @@ int Model::nfaces() {
     return (int)faces_.size();
 }
 
-std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/>> Model::face(int idx) {
+std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/, int /*normal idx*/>> Model::face(int idx) {
     return faces_[idx];
 }
 
@@ -61,5 +67,9 @@ Vec3f Model::vert(int i) {
 
 Vec3f Model::tex(int i) {
     return texcoords_[i];
+}
+
+Vec3f Model::norm(int i) {
+    return norm_[i];
 }
 
