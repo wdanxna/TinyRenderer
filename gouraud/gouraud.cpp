@@ -63,7 +63,7 @@ void triangle(
             
             //calculate lighting here
             norm.normalize();
-            float intensity = norm * light * 1.5f;
+            float intensity = norm * light;
 
             if (zbuffer[y*image.get_width() + x] < z) {
                 zbuffer[y*image.get_width() + x] = z;
@@ -73,6 +73,14 @@ void triangle(
                     color.b * intensity,
                     1.0f
                 ));
+
+                //use this to check lighting
+                // image.set(x, y, TGAColor(
+                //     255 * intensity,
+                //     255 * intensity,
+                //     255 * intensity,
+                //     1.0f
+                // ));
             }
         }
     }
@@ -146,19 +154,19 @@ int main() {
 
     Matrix model2world = Matrix::identity(4); // transform from model space to world space
 
-    Vec3f light{-1, 0, 0};
+    Vec3f light{1, -2, -2};
      //light
-    // Matrix l;
-    // l[0][0] = -light.x;
-    // l[1][0] = -light.y;
-    // l[2][0] = -light.z;
-    // l[3][0] = 1.0f;
+    Matrix l;
+    l[0][0] = -light.x;
+    l[1][0] = -light.y;
+    l[2][0] = -light.z;
+    l[3][0] = 0.0f;// <-- don't translate the light direction!
 
-    // Matrix lp = (view * model2world) * l;
-    // light.x = lp[0][0];
-    // light.y = lp[1][0];
-    // light.z = lp[2][0];
-    // light.normalize();
+    Matrix lp = (view * model2world) * l;
+    light.x = lp[0][0];
+    light.y = lp[1][0];
+    light.z = lp[2][0];
+    light.normalize();
 
     for (int i = 0; i < model.nfaces(); ++i) {
         auto face = model.face(i);
