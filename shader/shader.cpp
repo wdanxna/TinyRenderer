@@ -43,7 +43,10 @@ struct GouraudShader : public Shader {
     Matrix modelView_invtrans;
     Matrix proj;
 
+    TGAImage* texture;
+
     Vec3f varying_intensity;//write by vertex shader, read by fragment shader
+    Vec3f varying_uv[3];
 
     Matrix vertex(int iface, int nthvert) override {
         const auto verts = model->face(iface);
@@ -59,6 +62,8 @@ struct GouraudShader : public Shader {
         l.normalize();//turns out normalization is very important
         varying_intensity.raw[nthvert] = std::max(0.1f, normal_view * l);
 
+        varying_uv[nthvert] = tex;
+
         //do vertex transformation
         return proj * modelView * embed(vertex);
     }
@@ -66,7 +71,16 @@ struct GouraudShader : public Shader {
     bool fragment(const Vec3f& barycentric, /*out*/TGAColor& color) override {
         //interpolate intensity passed by vertex shader
         float intensity = barycentric * varying_intensity;
-        color = TGAColor(255, 255, 255, 255) * intensity;
+        //interpolate uv
+        Vec2f uv = Vec2f(
+            barycentric.x * varying_uv[0].x + barycentric.y * varying_uv[1].x + barycentric.z * varying_uv[2].x,
+            barycentric.x * varying_uv[0].y + barycentric.y * varying_uv[1].y + barycentric.z * varying_uv[2].y
+        );
+
+        
+        color = texture->get(
+            int(uv.x * texture->get_width()), 
+            int(uv.y * texture->get_height())) * intensity;
         return true;
     }
 };
@@ -208,6 +222,7 @@ int main() {
 
     GouraudShader shader;
     shader.model = &model;
+    shader.texture = &texture;
     shader.lightDir = light;
     shader.modelView = view * model2world;
     shader.modelView_invtrans = (view * model2world).inverse().transpose();
