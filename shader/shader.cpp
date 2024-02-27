@@ -77,13 +77,66 @@ struct GouraudShader : public Shader {
             barycentric.x * varying_uv[0].y + barycentric.y * varying_uv[1].y + barycentric.z * varying_uv[2].y
         );
 
-        
+
         color = texture->get(
             int(uv.x * texture->get_width()), 
             int(uv.y * texture->get_height())) * intensity;
         return true;
     }
 };
+
+
+struct NormalmapShader : public Shader {
+    Vec3f lightDir;
+    Matrix modelView;
+    Matrix modelView_invtrans;
+    Matrix proj;
+
+    TGAImage* texture;
+    TGAImage* normalmap;
+
+    Vec3f varying_intensity;//write by vertex shader, read by fragment shader
+    Vec3f varying_uv[3];
+
+    Matrix vertex(int iface, int nthvert) override {
+        const auto verts = model->face(iface);
+        const auto [v, t, n] = verts[nthvert];
+
+        Vec3f vertex = model->vert(v);
+        Vec3f tex = model->tex(t);
+        varying_uv[nthvert] = tex;
+        //do vertex transformation
+        return proj * modelView * embed(vertex);
+    }
+
+    bool fragment(const Vec3f& barycentric, /*out*/TGAColor& color) override {
+        //interpolate intensity passed by vertex shader
+        Vec3f l = project(modelView * embed(lightDir*-1, 0.0f)).normalize();
+        //interpolate uv
+        Vec2f uv = Vec2f(
+            barycentric.x * varying_uv[0].x + barycentric.y * varying_uv[1].x + barycentric.z * varying_uv[2].x,
+            barycentric.x * varying_uv[0].y + barycentric.y * varying_uv[1].y + barycentric.z * varying_uv[2].y
+        );
+
+        //read normal
+        TGAColor n_sample = normalmap->get(
+            int(uv.x * normalmap->get_width()), 
+            int(uv.y * normalmap->get_height()));
+        Vec3f n = Vec3f{
+            n_sample.r / 255.0f,
+            n_sample.g / 255.0f,
+            n_sample.b / 255.0f
+        };
+        n = project(modelView_invtrans * embed(n)).normalize();
+
+        float intensity = std::max(0.0f, n*l);
+        color = texture->get(
+            int(uv.x * texture->get_width()), 
+            int(uv.y * texture->get_height())) * intensity * 2.0f;
+        return true;
+    }
+};
+
 
 const int max_width = 500;
 const int max_height = 500;
@@ -195,9 +248,14 @@ int main() {
     int height = 501;
     TGAImage img(width, height, TGAImage::RGB);
     TGAImage zimg(width, height, TGAImage::RGB);
+
     TGAImage texture;
     texture.read_tga_file("../res/african_head_diffuse.tga");
     texture.flip_vertically();
+
+    TGAImage normalmap;
+    normalmap.read_tga_file("../res/african_head_nm.tga");
+    normalmap.flip_vertically();
 
     float zbuffer[width * height];
     for (int j = 0; j < width*height; j++) {
@@ -212,8 +270,8 @@ int main() {
     Matrix projection = Matrix::identity(4);
     projection[3][2] = -1.0f/c;
 
-    // Vec3f camera{0.15f / 2, 0.05f / 2, 0.6f / 2};
-    Vec3f camera{.3f, .4f, .5f};
+    Vec3f camera{0.15f / 2, 0.05f / 2, 0.6f / 2};
+    // Vec3f camera{.3f, .4f, .5f};
     Matrix view = lookAt({0.0f, 0.0f, 0.001f}, camera, {0.0f, 1.0f, 0.0f});
 
     Matrix model2world = Matrix::identity(4); // transform from model space to world space
@@ -223,6 +281,7 @@ int main() {
     GouraudShader shader;
     shader.model = &model;
     shader.texture = &texture;
+    // shader.normalmap = &normalmap;
     shader.lightDir = light;
     shader.modelView = view * model2world;
     shader.modelView_invtrans = (view * model2world).inverse().transpose();
@@ -240,7 +299,7 @@ int main() {
     zimg.write_tga_file("z.tga");
 
     img.flip_vertically();
-    img.write_tga_file("face.tga");
+    img.write_tga_file("gouraud.tga");
 
     return 0;
 }
