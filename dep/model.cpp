@@ -49,27 +49,27 @@ Model::Model(const char *filename) : verts_(), faces_() {
 Model::~Model() {
 }
 
-int Model::nverts() {
+int Model::nverts() const {
     return (int)verts_.size();
 }
 
-int Model::nfaces() {
+int Model::nfaces() const {
     return (int)faces_.size();
 }
 
-std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/, int /*normal idx*/>> Model::face(int idx) {
+std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/, int /*normal idx*/>> Model::face(int idx) const{
     return faces_[idx];
 }
 
-Vec3f Model::vert(int i) {
+Vec3f Model::vert(int i) const {
     return verts_[i];
 }
 
-Vec3f Model::tex(int i) {
+Vec3f Model::tex(int i) const {
     return texcoords_[i];
 }
 
-Vec3f Model::norm(int i) {
+Vec3f Model::norm(int i) const {
     return norm_[i];
 }
 

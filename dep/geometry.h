@@ -66,6 +66,11 @@ public:
     inline int nrows();
     inline int ncols();
 
+	inline float x() { return m[0][0];}
+	inline float y() { return m[1][0];}
+	inline float z() { return m[2][0];}
+	inline float w() { return m[3][0];}
+	
     static Matrix identity(int dimensions);
     std::vector<float>& operator[](const int i);
     Matrix operator*(const Matrix& a);

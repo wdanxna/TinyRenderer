@@ -5,20 +5,101 @@
 
 using namespace tinygraphics;
 
+Matrix embed(const Vec3f& v, float fill = 1.0f) {
+    Matrix ret;
+    ret[0][0] = v.x;
+    ret[1][0] = v.y;
+    ret[2][0] = v.z;
+    ret[3][0] = fill;
+    return ret;
+}
+
+Vec3f project(Matrix m) {
+    Vec3f ret;
+    ret.x = m[0][0];
+    ret.y = m[1][0];
+    ret.z = m[2][0];
+    return ret;
+}
+
+Vec3f project2(Matrix m) {
+    Vec3f ret;
+    ret.x = m[0][0] / m[3][0];
+    ret.y = m[1][0]/ m[3][0];
+    ret.z = m[2][0]/ m[3][0];
+    return ret;
+}
+
+
+struct Shader {
+    Model* model;
+    virtual Matrix vertex(int iface, int nthvert) = 0;
+    virtual bool fragment(const Vec3f& barycentric, TGAColor& color) = 0;
+};
+
+struct GouraudShader : public Shader {
+    Vec3f lightDir;
+    Matrix modelView;
+    Matrix modelView_invtrans;
+    Matrix proj;
+
+    Vec3f varying_intensity;//write by vertex shader, read by fragment shader
+
+    Matrix vertex(int iface, int nthvert) override {
+        const auto verts = model->face(iface);
+        const auto [v, t, n] = verts[nthvert];
+
+        Vec3f vertex = model->vert(v);
+        Vec3f tex = model->tex(t);
+        Vec3f norm = model->norm(n);
+        //calculate lighting per vertex
+        Vec3f normal_view = project(modelView_invtrans * embed(norm));
+        Vec3f l = project(modelView * embed(lightDir*-1, 0.0f));
+        normal_view.normalize();
+        l.normalize();//turns out normalization is very important
+        varying_intensity.raw[nthvert] = std::max(0.1f, normal_view * l);
+
+        //do vertex transformation
+        return proj * modelView * embed(vertex);
+    }
+
+    bool fragment(const Vec3f& barycentric, /*out*/TGAColor& color) override {
+        //interpolate intensity passed by vertex shader
+        float intensity = barycentric * varying_intensity;
+        color = TGAColor(255, 255, 255, 255) * intensity;
+        return true;
+    }
+};
 
 const int max_width = 500;
 const int max_height = 500;
 void triangle(
-    Vec3f* vert, float* zbuffer, 
-    Vec3f* texcoords, TGAImage& tex, 
-    Vec3f* normals, const Vec3f& light/*light direction*/, 
+    const Model& model, 
+    int iface, 
+    Shader& shader, 
+    float* zbuffer,
     TGAImage& image) {
+
+    //do vertex shader
+    auto face = model.face(iface);
+    Vec3f screen_coords[3];
+    Vec3f tex_coords[3];
+    Vec3f norm[3];
+    for (int i = 0; i < 3; i++) {
+        auto v = shader.vertex(iface, i);
+        screen_coords[i] = Vec3f(
+            (v.x() / v.w() + 1.0) * 501 / 2.0f,
+            (v.y() / v.w() + 1.0) * 501 / 2.0f,
+            (v.z() / v.w() + 1.0) * 255 / 2.0f
+        );
+    }
+
 
     // find bounding box first
     auto bottomLeft = Vec2i(INT_MAX, INT_MAX);
     auto topRight = Vec2i(0, 0);
     for (int i = 0; i < 3; i++) {
-        auto& v = vert[i];
+        auto& v = screen_coords[i];
         bottomLeft.x = std::max(std::min(bottomLeft.x, (int)v.x), 0);
         bottomLeft.x = std::min(bottomLeft.x, max_width);
         bottomLeft.y = std::max(std::min(bottomLeft.y, (int)v.y), 0);
@@ -33,9 +114,9 @@ void triangle(
     for (int x = bottomLeft.x; x <= topRight.x; x++) {
         for (int y = bottomLeft.y; y <= topRight.y; y++) {
             Vec2i ti[3] = {
-                {(int)vert[0].x, (int)vert[0].y},
-                {(int)vert[1].x, (int)vert[1].y},
-                {(int)vert[2].x, (int)vert[2].y}
+                {(int)screen_coords[0].x, (int)screen_coords[0].y},
+                {(int)screen_coords[1].x, (int)screen_coords[1].y},
+                {(int)screen_coords[2].x, (int)screen_coords[2].y}
             };
 
             Vec3f u = barycentric(ti, Vec2i{x, y});
@@ -46,41 +127,15 @@ void triangle(
             Vec3f texcoord, norm;
             for (int i = 0; i < 3; i++) {
                 //interpolate z
-                z +=  u.raw[i] * vert[i].z;
-                
-                for (int j = 0; j < 3; j++) {
-                    //interpolate tex coords
-                    texcoord.raw[i] += u.raw[j] * texcoords[j].raw[i];
-                    //interpolate normal
-                    norm.raw[i] += u.raw[j] * normals[j].raw[i];
-                }
+                z +=  u.raw[i] * screen_coords[i].z;
             }
 
-            TGAColor color = tex.get(
-                tex.get_width() * texcoord.x,
-                tex.get_height() * texcoord.y
-            );
-            
-            //calculate lighting here
-            norm.normalize();
-            float intensity = std::max(0.0f, norm * light);
-
             if (zbuffer[y*image.get_width() + x] < z) {
-                zbuffer[y*image.get_width() + x] = z;
-                image.set(x, y, TGAColor(
-                    color.r * intensity,
-                    color.g * intensity,
-                    color.b * intensity,
-                    1.0f
-                ));
-
-                //use this to check lighting
-                // image.set(x, y, TGAColor(
-                //     255 * intensity,
-                //     255 * intensity,
-                //     255 * intensity,
-                //     1.0f
-                // ));
+                TGAColor color;
+                if (shader.fragment(u, color)) {
+                    zbuffer[y*image.get_width() + x] = z;
+                    image.set(x, y, color);
+                }
             }
         }
     }
@@ -122,7 +177,6 @@ Matrix lookAt(const Vec3f& center, const Vec3f& eye, const Vec3f& up) {
 }
 
 int main() {
-
     int width = 501;
     int height = 501;
     TGAImage img(width, height, TGAImage::RGB);
@@ -150,77 +204,21 @@ int main() {
 
     Matrix model2world = Matrix::identity(4); // transform from model space to world space
 
-    Vec3f light{0, 1, -1};
-     //light
-    Matrix l;
-    l[0][0] = -light.x;
-    l[1][0] = -light.y;
-    l[2][0] = -light.z;
-    l[3][0] = 0.0f;// <-- don't translate the light direction!
+    Vec3f light{0,1, -1};
 
-    Matrix lp = (view * model2world) * l;
-    light.x = lp[0][0];
-    light.y = lp[1][0];
-    light.z = lp[2][0];
-    light.normalize();
+    GouraudShader shader;
+    shader.model = &model;
+    shader.lightDir = light;
+    shader.modelView = view * model2world;
+    shader.modelView_invtrans = (view * model2world).inverse().transpose();
+    shader.proj = projection;
 
     for (int i = 0; i < model.nfaces(); ++i) {
-        auto face = model.face(i);
-        Vec3f screen_coords[3];
-        Vec3f vertex_coords[3];
-        Vec3f tex_coords[3];
-        Vec3f norm[3];
-       
-        // foreach vertex in a triangle
-        for (int j = 0; j < 3; j++) {
-            const auto [vert_idx, tex_idx, norm_idx] = face[j];
-            vertex_coords[j] = model.vert(vert_idx);
-            tex_coords[j] = model.tex(tex_idx);
-            norm[j] = model.norm(norm_idx);
-            
-            //vertex
-            Matrix v;
-            v[0][0] = vertex_coords[j].x;
-            v[1][0] = vertex_coords[j].y;
-            v[2][0] = vertex_coords[j].z;
-            v[3][0] = 1.0f;
-
-            //normal
-            Matrix n;
-            n[0][0] = norm[j].x;
-            n[1][0] = norm[j].y;
-            n[2][0] = norm[j].z;
-            n[3][0] = 1.0f;
-
-            Matrix p = projection * view * model2world * v;
-            //perspective divide
-            vertex_coords[j].x = p[0][0] / p[3][0];
-            vertex_coords[j].y = p[1][0] / p[3][0];
-            vertex_coords[j].z = p[2][0] / p[3][0];
-
-            // normal transformation
-            Matrix np = (view * model2world).inverse().transpose() * n;
-            norm[j].x = np[0][0]/np[3][0];
-            norm[j].y = np[1][0]/np[3][0];
-            norm[j].z = np[2][0]/np[3][0];
-            norm[j].normalize();
-
-            screen_coords[j] = Vec3f(
-                (vertex_coords[j].x + 1.0) * width / 2.0f,
-                (vertex_coords[j].y + 1.0) * height / 2.0f,
-                (vertex_coords[j].z + 1.0f) * 255 / 2.0f
-            );
-
-            // line({(int)screen_coords[j].x, (int)screen_coords[j].y}, 
-            //     {(int)screen_coords[j].x + (int)(norm[j].x * 20.5f), 
-            //     (int)screen_coords[j].y + (int)(norm[j].y * 20.5f)}, img, red);
-        }
-
-        triangle(screen_coords, zbuffer, tex_coords, texture, norm, light, img);
+        triangle(model, i, shader, zbuffer, img);
     }
 
     for (int j = 0; j < width*height; j++) {
-       TGAColor d((int)1*zbuffer[j], (int)1*zbuffer[j], (int)1*zbuffer[j], 255);
+       TGAColor d((int)zbuffer[j], (int)zbuffer[j], (int)zbuffer[j], 255);
        zimg.set(j % width, j / width, d);
     }
     zimg.flip_vertically();

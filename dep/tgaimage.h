@@ -57,6 +57,15 @@ struct TGAColor {
 		}
 		return *this;
 	}
+
+	TGAColor operator*(float scale) {
+		return TGAColor(
+			int(r * scale),
+			int(g * scale),
+			int(b * scale),
+			int(a * scale)
+		);
+	}
 };
 
 
