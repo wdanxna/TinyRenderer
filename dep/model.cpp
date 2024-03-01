@@ -17,18 +17,18 @@ Model::Model(const char *filename) : verts_(), faces_() {
         if (!line.compare(0, 2, "v ")) {
             iss >> trash;
             Vec3f v;
-            for (int i=0;i<3;i++) iss >> v.raw[i];
+            for (int i=0;i<3;i++) iss >> v[i];
             verts_.push_back(v);
         } else if (!line.compare(0, 2, "vt")) {
             //parse texture coordinates
             iss >> trash >> trash;
             Vec3f uv;
-            for (int i = 0; i < 3; i++) iss >> uv.raw[i];
+            for (int i = 0; i < 3; i++) iss >> uv[i];
             texcoords_.push_back(uv);
         } else if (!line.compare(0, 2, "vn")) {
             Vec3f n;
             iss >> trash >> trash;
-            for (int i = 0; i < 3; i++) iss >> n.raw[i];
+            for (int i = 0; i < 3; i++) iss >> n[i];
             norm_.push_back(n);
         } else if (!line.compare(0, 2, "f ")) {
             std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/, int /*norm idx*/>> f;

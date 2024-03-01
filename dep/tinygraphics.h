@@ -2,7 +2,7 @@
 #define _my_graphics_
 
 #include <dep/tgaimage.h>
-#include <dep/geometry.h>
+#include <dep/geometry2.h>
 namespace tinygraphics {
 
     const TGAColor white(255,255,255,255);

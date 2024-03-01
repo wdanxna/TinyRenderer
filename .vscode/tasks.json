@@ -10,7 +10,7 @@
                 "-I${fileDirname}/../",
                 "-g",
                 "${fileDirname}/../dep/tgaimage.cpp",
-                "${fileDirname}/../dep/geometry.cpp",
+                "${fileDirname}/../dep/geometry2.cpp",
                 "${fileDirname}/../dep/model.cpp",
                 "${fileDirname}/../dep/tinygraphics.cpp",
                 "${file}",

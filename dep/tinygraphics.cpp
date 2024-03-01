@@ -57,7 +57,7 @@ Vec3f barycentric(Vec2i *pts, Vec2i P) {
     auto& A = pts[0]; 
     auto& B = pts[1]; 
     auto& C = pts[2];
-    Vec3f u = Vec3f(B.x-A.x, C.x-A.x, A.x-P.x)^Vec3f(B.y-A.y, C.y-A.y, A.y-P.y);
+    Vec3f u = cross(Vec3f(B.x-A.x, C.x-A.x, A.x-P.x), Vec3f(B.y-A.y, C.y-A.y, A.y-P.y));
     // since u as coordinate should be integer, therefore u.z < 1.0 means that AP does not stick
     // out (enough) to make an eligible triangle (degenerate triangle), we ignore this case
     if (std::abs(u.z) < 1.0f) return Vec3f{-1.0f, -1.0f, -1.0f};
