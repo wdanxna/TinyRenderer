@@ -191,26 +191,26 @@ struct PhongShader : public Shader {
         //dot product between r and view vector (0, 0, 1), why (0,0,1)?
         //since after camera transform, we always located at (0,0,c) and looking
         //at (0, 0, -1), the view vector is just -(0, 0, -1) -> (0, 0, 1)
-        float spec = powf(std::max(r.z, 0.0f), pow) * 150.0f;
+        float spec = powf(std::max(r.z, 0.0f), std::max(1.0f, pow));
 
         //calc shadow
         Vec4f pos = embed<4>(varying_pos * barycentric);//<-- view space vertex pos
         Vec4f p = shadowM * pos;
         int shadow_val = shadowmap->get((p[0]/p[3]+1.0)/2.0f * shadowmap->get_width(), 
                            (p[1]/p[3]+1.0)/2.0f * shadowmap->get_height()).r;
-        int z_val = (255*(p[2]+1.0f)/2.0f);
-        float shadow = 0.3f + 0.7 * (shadow_val < (7+z_val));
+        int z_val = std::max(0, std::min(255, (int)(255*(p[2]+1.0f)/2.0f)));
+        float shadow = 0.3f + 0.7 * (shadow_val < (2+z_val));
 
         TGAColor diffuse = texture->get(
             int(uv.x * texture->get_width()), 
-            int(uv.y * texture->get_height())) * std::max(0.0f, n*l) * shadow;
+            int(uv.y * texture->get_height())) * std::max(0.0f, n*l) * shadow * 1.2;
 
-        int ambient = 10;
+        int ambient = 20;
 
         color = TGAColor(
-            (int)std::min<float>(ambient + diffuse.r + spec, 255),
-            (int)std::min<float>(ambient + diffuse.g + spec, 255),
-            (int)std::min<float>(ambient + diffuse.b + spec, 255),
+            (int)std::min<float>(ambient + diffuse.r + diffuse.r * spec, 255),
+            (int)std::min<float>(ambient + diffuse.g + diffuse.g * spec, 255),
+            (int)std::min<float>(ambient + diffuse.b + diffuse.b * spec, 255),
             255
         );
         return true;
@@ -240,7 +240,7 @@ public:
     virtual bool fragment(const Vec3f& barycentric, TGAColor& color) override {
         //interpolate the ndc vertex coordinates
         Vec3f v = varying_pos * barycentric;
-        color = TGAColor(255, 255, 255, 255) * ((v.z + 1.f)/2.0f);
+        color = TGAColor(255, 255, 255, 255) * std::max(0.0f, ((v.z + 1.f)/2.0f));
         return true;
     }
 };
@@ -253,15 +253,15 @@ int main() {
     TGAImage zimg(width, height, TGAImage::RGB);
 
     TGAImage texture;
-    texture.read_tga_file("../res/african_head_diffuse.tga");
+    texture.read_tga_file("../res/diablo3_pose_diffuse.tga");
     texture.flip_vertically();
 
     TGAImage normalmap;
-    normalmap.read_tga_file("../res/african_head_nm_tangent.tga");
+    normalmap.read_tga_file("../res/diablo3_pose_nm_tangent.tga");
     normalmap.flip_vertically();
 
     TGAImage specularmap;
-    specularmap.read_tga_file("../res/african_head_spec.tga");
+    specularmap.read_tga_file("../res/diablo3_pose_spec.tga");
     specularmap.flip_vertically();
 
     float zbuffer[width * height];
@@ -269,7 +269,7 @@ int main() {
         zbuffer[j] = std::numeric_limits<float>::min();
     }
 
-    Model model("../res/african_head.obj");
+    Model model("../res/diablo3_pose.obj");
 
     //c is equivalent to the focal length (the distance between the pinhole and the projection plane)
     //that is, the smaller the c is the larger the FOV will be and strongger the perspective effect.
@@ -277,9 +277,10 @@ int main() {
     Matrix projection = Matrix::identity();
     projection[3][2] = -1.0f/c;
 
-    // Vec3f camera{0.15f / 2, 0.05f / 2, 0.6f / 2};
+    // Vec3f camera{0.25f, 0.05f, 0.6f};
     // Vec3f camera{.3f, .2f, 0.2f};
-    Vec3f camera{0.0, 0.0f, 0.5f};
+    Vec3f camera{0.0, 0.0f, 0.3f};
+    // Vec3f camera{-.3f, .2f, 0.2f};
     Matrix view = lookAt({0.0f, 0.0f, 0.01f}, camera, {0.0f, 1.0f, 0.0f});
 
     Matrix model2world = Matrix::identity(); // transform from model space to world space
