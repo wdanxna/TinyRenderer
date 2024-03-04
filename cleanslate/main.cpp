@@ -42,26 +42,36 @@ void triangle(Vec3f* v, const TGAColor& color, TGAImage& out) {
     }
 }
 
+mat<4,4,float> viewport(int width, int height) {
+    //viewport = scale * T
+    mat<4,4,float> m;
+    m[0] = {width * 0.5f, 0.f, 0.f,  width * 0.5f};
+    m[1] = {0.f, height * 0.5f, 0.f,  height * 0.5f};
+    m[2] = {0.f, 0.f,  0.5f, 0.5f};
+    m[3] = {0.f, 0.f,  0.f,  1.f};
+    return m;
+}
+
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
 
-    //viewport = scale * T
-    mat<4,4,float> viewport;
-    viewport[0] = {width * 0.5f, 0.f, 0.f,  width * 0.5f};
-    viewport[1] = {0.f, height * 0.5f, 0.f,  height * 0.5f};
-    viewport[2] = {0.f, 0.f,  0.5f, 0.5f};
-    viewport[3] = {0.f, 0.f,  0.f,  1.f};
+    mat<4,4,float> vp = viewport(width, height);
 
     Model model("../res/african_head.obj");
     for (int i = 0; i < model.nfaces(); i++) {
         auto vert_ids = model.face(i);
-        Vec3f verts[3];
+        Vec3f object_verts[3];
+        Vec3f screen_verts[3];
         for (int j = 0; j < 3; j++) {
-            verts[j] = proj<3>(viewport * embed<4>(model.vert(vert_ids[j])));
+            object_verts[j] = model.vert(vert_ids[j]);
+            screen_verts[j] = proj<3>(vp * embed<4>(object_verts[j]));
         }
 
-        triangle(verts, TGAColor(255, 255, 255, 255), framebuffer);
+        //calculate normal
+        Vec3f n = cross((object_verts[1] - object_verts[0]), (object_verts[2] - object_verts[0])).normalize();
+        float shade = std::max(0.0f, n.z);
+        triangle(screen_verts, TGAColor(255 * shade, 255* shade, 255* shade, 255), framebuffer);
     }
 
 
