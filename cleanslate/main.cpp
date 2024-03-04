@@ -64,13 +64,40 @@ mat<4,4,float> perspective(float c) {
     return m;
 }
 
+mat<4,4,float> lookAt(const Vec3f& eye, const Vec3f& target, const Vec3f& up) {
+    mat<4,4,float> t = mat<4,4,float>::identity();
+    t[0][3] = -eye.x;
+    t[1][3] = -eye.y;
+    t[2][3] = -eye.z;
+
+    Vec3f z = (eye - target).normalize();
+    Vec3f x = cross(up, z).normalize();
+    Vec3f y = cross(z, x).normalize();
+
+    mat<4,4,float> rot;
+    rot.set_col(0, embed<4>(x, 0.0f));
+    rot.set_col(1, embed<4>(y, 0.0f));
+    rot.set_col(2, embed<4>(z, 0.0f));
+    rot.set_col(3, {0.0f, 0.0f, 0.0f, 1.0f});
+
+    return rot.invert() * t;
+}
+
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
     TGAImage zimg(width, height, TGAImage::RGBA);
 
+    mat<4,4,float> modelworld = mat<4,4,float>::identity();
+    modelworld[0][3] = 0;//tx
+    modelworld[1][3] = 0;//ty
+    modelworld[2][3] = 0;//tz
+
+    Vec3f eye {0.5f, 0.0f, 0.0};
+    mat<4,4,float> view = lookAt(eye, {0.0f, 0.0f, 0.001f}, {0.0f, 1.0f, 0.0f});
+
     mat<4,4,float> vp = viewport(width, height);
-    mat<4,4,float> projection = perspective(2.0f);
+    mat<4,4,float> projection = perspective(1.0f);
 
     float zbuffer[width*height];
     for (int i = 0; i < width*height;i++) {
@@ -81,12 +108,12 @@ int main() {
     for (int i = 0; i < model.nfaces(); i++) {
         auto vert_ids = model.face(i);
         Vec3f object_verts[3];
+        Vec4f clip_verts[3];
         Vec3f screen_verts[3];
         for (int j = 0; j < 3; j++) {
             object_verts[j] = model.vert(vert_ids[j]);
-            Vec4f v = projection * embed<4>(object_verts[j]);
-            v = v / v[3];//perspective divide
-            screen_verts[j] = proj<3>(vp * v);
+            clip_verts[j] = projection * view * modelworld * embed<4>(object_verts[j]);
+            screen_verts[j] = proj<3>(vp * (clip_verts[j]/clip_verts[j][3]));
         }
 
         //calculate normal
