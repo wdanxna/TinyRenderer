@@ -1,5 +1,6 @@
 #include <dep/tgaimage.h>
 #include <dep/model.h>
+#include "main.h"
 
 const int width = 500;
 const int height = 500;
@@ -83,6 +84,32 @@ mat<4,4,float> lookAt(const Vec3f& eye, const Vec3f& target, const Vec3f& up) {
     return rot.invert() * t;
 }
 
+void rasterize(Model &model, Matrix &projection, Matrix &view, Matrix &modelworld, Matrix &vp, float zbuffer[250000], TGAImage &framebuffer)
+{
+    for (int i = 0; i < model.nfaces(); i++)
+    {
+        auto vert_ids = model.face(i);
+        Vec3f object_verts[3];
+        Vec4f clip_verts[3];
+        Vec3f ndc_verts[3];
+        Vec3f screen_verts[3];
+        for (int j = 0; j < 3; j++)
+        {
+            object_verts[j] = model.vert(vert_ids[j]);
+            clip_verts[j] = projection * view * modelworld * embed<4>(object_verts[j]);
+            ndc_verts[j] = proj<3>(clip_verts[j] / clip_verts[j][3]);
+            screen_verts[j] = proj<3>(vp * embed<4>(ndc_verts[j]));
+        }
+
+        // calculate normal
+        Vec3f n = cross((ndc_verts[1] - ndc_verts[0]),
+                        (ndc_verts[2] - ndc_verts[0]))
+                      .normalize();
+        float shade = std::max(0.0f, n.z);
+        triangle(screen_verts, TGAColor(255 * shade, 255 * shade, 255 * shade, 255), zbuffer, framebuffer);
+    }
+}
+
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
@@ -90,10 +117,10 @@ int main() {
 
     mat<4,4,float> modelworld = mat<4,4,float>::identity();
     modelworld[0][3] = 0;//tx
-    modelworld[1][3] = 0;//ty
-    modelworld[2][3] = 0;//tz
+    modelworld[1][3] = 0.1;//ty
+    modelworld[2][3] = -0.3f;//tz
 
-    Vec3f eye {0.5f, 0.0f, 0.0};
+    Vec3f eye {0.2f/1.0f, 0.1f/1.0f, 0.5/1.0f};
     mat<4,4,float> view = lookAt(eye, {0.0f, 0.0f, 0.001f}, {0.0f, 1.0f, 0.0f});
 
     mat<4,4,float> vp = viewport(width, height);
@@ -104,24 +131,11 @@ int main() {
         zbuffer[i] = std::numeric_limits<float>::min();
     }
 
-    Model model("../res/african_head.obj");
-    for (int i = 0; i < model.nfaces(); i++) {
-        auto vert_ids = model.face(i);
-        Vec3f object_verts[3];
-        Vec4f clip_verts[3];
-        Vec3f screen_verts[3];
-        for (int j = 0; j < 3; j++) {
-            object_verts[j] = model.vert(vert_ids[j]);
-            clip_verts[j] = projection * view * modelworld * embed<4>(object_verts[j]);
-            screen_verts[j] = proj<3>(vp * (clip_verts[j]/clip_verts[j][3]));
-        }
+    Model head("../res/african_head.obj");
+    rasterize(head, projection, view, modelworld, vp, zbuffer, framebuffer);
 
-        //calculate normal
-        Vec3f n = cross((object_verts[1] - object_verts[0]), 
-                        (object_verts[2] - object_verts[0])).normalize();
-        float shade = std::max(0.0f, n.z);
-        triangle(screen_verts, TGAColor(255 * shade, 255* shade, 255* shade, 255), zbuffer, framebuffer);
-    }
+    Model floor("../res/floor.obj");
+    rasterize(floor, projection, view, modelworld, vp, zbuffer, framebuffer);
 
     //zbuffer visualization
     for (int x = 0; x < width; x++) {
