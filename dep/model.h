@@ -1,29 +1,32 @@
 #ifndef __MODEL_H__
 #define __MODEL_H__
-
 #include <vector>
-#include <tuple>
-#include "geometry2.h"
+#include <string>
+#include "geometry.h"
+#include "tgaimage.h"
 
 class Model {
 private:
-	std::vector<Vec3f> verts_;
-	std::vector<Vec3f> texcoords_;
-	std::vector<Vec3f> norm_;
-	std::vector<
-		//[(vert, tex, norm), (vert, tex, norm), (vert, tex, norm)]
-		std::vector<std::tuple<
-			int/*vert idx*/, int /*tex idx*/, int /*normal idx*/>>
-	> faces_;
+    std::vector<Vec3f> verts_;
+    std::vector<std::vector<Vec3i> > faces_; // attention, this Vec3i means vertex/uv/normal
+    std::vector<Vec3f> norms_;
+    std::vector<Vec2f> uv_;
+    TGAImage diffusemap_;
+    TGAImage normalmap_;
+    TGAImage specularmap_;
+    void load_texture(std::string filename, const char *suffix, TGAImage &img);
 public:
-	Model(const char *filename);
-	~Model();
-	int nverts() const;
-	int nfaces() const;
-	Vec3f vert(int i) const;
-	Vec3f tex(int i) const;
-	Vec3f norm(int i) const;
-	std::vector<std::tuple<int/*vert idx*/, int /*tex idx*/, int /*normal idx*/>> face(int idx) const;
+    Model(const char *filename);
+    ~Model();
+    int nverts();
+    int nfaces();
+    Vec3f normal(int iface, int nthvert);
+    Vec3f normal(Vec2f uv);
+    Vec3f vert(int i);
+    Vec3f vert(int iface, int nthvert);
+    Vec2f uv(int iface, int nthvert);
+    TGAColor diffuse(Vec2f uv);
+    float specular(Vec2f uv);
+    std::vector<int> face(int idx);
 };
-
 #endif //__MODEL_H__

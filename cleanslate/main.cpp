@@ -1,5 +1,6 @@
 #include <dep/tgaimage.h>
 #include <dep/model.h>
+
 const int width = 500;
 const int height = 500;
 
@@ -45,13 +46,24 @@ int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
 
-    Vec3f verts[3] = {
-        {0, 0, 0},
-        {100, 100, 0},
-        {50, 200, 0}
-    };
+    //viewport = scale * T
+    mat<4,4,float> viewport;
+    viewport[0] = {width * 0.5f, 0.f, 0.f,  width * 0.5f};
+    viewport[1] = {0.f, height * 0.5f, 0.f,  height * 0.5f};
+    viewport[2] = {0.f, 0.f,  0.5f, 0.5f};
+    viewport[3] = {0.f, 0.f,  0.f,  1.f};
 
-    triangle(verts, TGAColor(255, 0, 0, 255), framebuffer);
+    Model model("../res/african_head.obj");
+    for (int i = 0; i < model.nfaces(); i++) {
+        auto vert_ids = model.face(i);
+        Vec3f verts[3];
+        for (int j = 0; j < 3; j++) {
+            verts[j] = proj<3>(viewport * embed<4>(model.vert(vert_ids[j])));
+        }
+
+        triangle(verts, TGAColor(255, 255, 255, 255), framebuffer);
+    }
+
 
     framebuffer.flip_vertically();//make (0,0) at bottom left, x going right, y going up
     framebuffer.write_tga_file("frame.tga");
