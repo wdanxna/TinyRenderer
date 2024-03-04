@@ -55,12 +55,22 @@ mat<4,4,float> viewport(int width, int height) {
     return m;
 }
 
+mat<4,4,float> perspective(float c) {
+    mat<4, 4, float> m;
+    m[0] = {1.f,  0.0f, 0.0f, 0.0f};
+    m[1] = {0.0f, 1.f,  0.0f, 0.0f};
+    m[2] = {0.0f, 0.0f, 1.0f, 0.0f};
+    m[3] = {0.0f, 0.0f, -1.0f/c, 1.f};
+    return m;
+}
+
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
     TGAImage zimg(width, height, TGAImage::RGBA);
 
     mat<4,4,float> vp = viewport(width, height);
+    mat<4,4,float> projection = perspective(2.0f);
 
     float zbuffer[width*height];
     for (int i = 0; i < width*height;i++) {
@@ -74,11 +84,14 @@ int main() {
         Vec3f screen_verts[3];
         for (int j = 0; j < 3; j++) {
             object_verts[j] = model.vert(vert_ids[j]);
-            screen_verts[j] = proj<3>(vp * embed<4>(object_verts[j]));
+            Vec4f v = projection * embed<4>(object_verts[j]);
+            v = v / v[3];//perspective divide
+            screen_verts[j] = proj<3>(vp * v);
         }
 
         //calculate normal
-        Vec3f n = cross((object_verts[1] - object_verts[0]), (object_verts[2] - object_verts[0])).normalize();
+        Vec3f n = cross((object_verts[1] - object_verts[0]), 
+                        (object_verts[2] - object_verts[0])).normalize();
         float shade = std::max(0.0f, n.z);
         triangle(screen_verts, TGAColor(255 * shade, 255* shade, 255* shade, 255), zbuffer, framebuffer);
     }
