@@ -15,7 +15,7 @@ Vec3f barycentric(Vec3f *v, Vec3f p) {
     return Vec3f(1.0-i.x-i.y, i.x, i.y);
 }
 
-void triangle(Vec3f* v, const TGAColor& color, TGAImage& out) {
+void triangle(Vec3f* v, const TGAColor& color, float* zbuffer, TGAImage& out) {
     int left = INT_MAX;
     int right = 0;
     int bottom = INT_MAX;
@@ -36,8 +36,11 @@ void triangle(Vec3f* v, const TGAColor& color, TGAImage& out) {
             verts.set_col(1, v[1]);
             verts.set_col(2, v[2]);
             auto frag_vert = verts * u;
-
-            out.set(x, y, color);
+            
+            if (zbuffer[x + y * width] - frag_vert.z < 1e-5) {
+                zbuffer[x + y * width] = frag_vert.z;
+                out.set(x, y, color);
+            }
         }
     }
 }
@@ -55,8 +58,14 @@ mat<4,4,float> viewport(int width, int height) {
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
+    TGAImage zimg(width, height, TGAImage::RGBA);
 
     mat<4,4,float> vp = viewport(width, height);
+
+    float zbuffer[width*height];
+    for (int i = 0; i < width*height;i++) {
+        zbuffer[i] = std::numeric_limits<float>::min();
+    }
 
     Model model("../res/african_head.obj");
     for (int i = 0; i < model.nfaces(); i++) {
@@ -71,8 +80,17 @@ int main() {
         //calculate normal
         Vec3f n = cross((object_verts[1] - object_verts[0]), (object_verts[2] - object_verts[0])).normalize();
         float shade = std::max(0.0f, n.z);
-        triangle(screen_verts, TGAColor(255 * shade, 255* shade, 255* shade, 255), framebuffer);
+        triangle(screen_verts, TGAColor(255 * shade, 255* shade, 255* shade, 255), zbuffer, framebuffer);
     }
+
+    //zbuffer visualization
+    for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
+            zimg.set(x, y, TGAColor(255,255,255,255) * zbuffer[x + y*width]);
+        }
+    }
+    zimg.flip_vertically();
+    zimg.write_tga_file("z.tga");
 
 
     framebuffer.flip_vertically();//make (0,0) at bottom left, x going right, y going up
