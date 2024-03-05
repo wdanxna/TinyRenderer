@@ -5,10 +5,10 @@
 const int width = 500;
 const int height = 500;
 
-Vec3f barycentric(Vec3f *v, Vec3f p) {
-    Vec3f p0p1 = v[1] - v[0];
-    Vec3f p0p2 = v[2] - v[0];
-    Vec3f pp0 = v[0] - p;
+Vec3f barycentric(mat<3,2,float> v, Vec2f p) {
+    Vec2f p0p1 = v[1] - v[0];
+    Vec2f p0p2 = v[2] - v[0];
+    Vec2f pp0 = v[0] - p;
 
     auto i = cross(Vec3f(p0p1.x, p0p2.x, pp0.x), 
                    Vec3f(p0p1.y, p0p2.y, pp0.y));
@@ -16,33 +16,84 @@ Vec3f barycentric(Vec3f *v, Vec3f p) {
     return Vec3f(1.0-i.x-i.y, i.x, i.y);
 }
 
-void triangle(Vec3f* v, const TGAColor& color, float* zbuffer, TGAImage& out) {
+void triangle(
+    mat<4,3,float> clip_verts, 
+    mat<2,3,float> uvs,
+    mat<4,4,float> viewport_matrix,
+    Model& model, float* zbuffer, TGAImage& out) {
+    mat<3,4,float> cv = clip_verts.transpose();
+    mat<3,2,float> sv;
+    for (int i = 0; i < 3; i++) {
+        sv[i] = proj<2>(viewport_matrix * (cv[i]/cv[i][3]));
+    }
+
     int left = INT_MAX;
     int right = 0;
     int bottom = INT_MAX;
     int up = 0;
     for (int i = 0; i < 3; i++) {
-        left = std::min(width-1, std::max(0, std::min(left, int(v[i].x + 0.5))));
-        right = std::min(width-1, std::max(0, std::max(right, int(v[i].x + 0.5))));
-        up = std::min(height-1, std::max(0, std::max(up, int(v[i].y + 0.5))));
-        bottom = std::min(height-1, std::max(0, std::min(bottom, int(v[i].y + 0.5))));
+        left = std::min(width-1, std::max(0, std::min(left, int(sv[i].x + 0.5))));
+        right = std::min(width-1, std::max(0, std::max(right, int(sv[i].x + 0.5))));
+        up = std::min(height-1, std::max(0, std::max(up, int(sv[i].y + 0.5))));
+        bottom = std::min(height-1, std::max(0, std::min(bottom, int(sv[i].y + 0.5))));
     }
     for (int x = left; x <= right; x++) {
         for (int y = bottom; y <= up; y++) {
-            auto u = barycentric(v, {(float)x, (float)y, (float)0});
-            if (u.x < 0 || u.y < 0 || u.z < 0) continue;
+            auto screen_bary = barycentric(sv, {(float)x, (float)y});
+            if (screen_bary.x < 0 || screen_bary.y < 0 || screen_bary.z < 0) continue;
+            //derive clip space barycentric from screen space barycentric
+            auto clip_bary = Vec3f{ screen_bary.x/cv[0][3], screen_bary.y/cv[1][3], screen_bary.z/cv[2][3]};
+            clip_bary = clip_bary / (clip_bary[0] + clip_bary[1] + clip_bary[2]);
 
-            mat<3,3,float> verts;
-            verts.set_col(0, v[0]);
-            verts.set_col(1, v[1]);
-            verts.set_col(2, v[2]);
-            auto frag_vert = verts * u;
-            
-            if (zbuffer[x + y * width] - frag_vert.z < 1e-5) {
-                zbuffer[x + y * width] = frag_vert.z;
+            auto uv = uvs * clip_bary;
+            TGAColor color = model.diffuse(uv);
+            color[3] = 255;
+
+            //shift z to prevent cutoff
+            float frag_depth = (clip_verts * clip_bary)[2] / 4.0f + 1.0f;
+
+            if (zbuffer[x + y * width] < frag_depth) {
+                zbuffer[x + y * width] = frag_depth;
                 out.set(x, y, color);
             }
         }
+    }
+}
+
+void rasterize(
+    Model &model,
+    Matrix &projection, 
+    Matrix &view, 
+    Matrix &modelworld, 
+    Matrix &vp, 
+    float* zbuffer, 
+    TGAImage &framebuffer)
+{
+    for (int i = 0; i < model.nfaces(); i++)
+    {
+        auto vert_ids = model.face(i);
+        Vec3f object_verts[3];
+        mat<3,4,float> clip_verts;
+        Vec3f ndc_verts[3];
+        Vec3f screen_verts[3];
+        
+        mat<2,3,float> uvs;
+        for (int j = 0; j < 3; j++)
+        {
+            uvs.set_col(j, model.uv(i, j));
+            object_verts[j] = model.vert(vert_ids[j]);
+            clip_verts[j] = projection * view * modelworld * embed<4>(object_verts[j]);
+            ndc_verts[j] = proj<3>(clip_verts[j] / clip_verts[j][3]);
+            screen_verts[j] = proj<3>(vp * embed<4>(ndc_verts[j]));
+        }
+
+        // calculate normal
+        Vec3f n = cross((ndc_verts[1] - ndc_verts[0]),
+                        (ndc_verts[2] - ndc_verts[0]))
+                      .normalize();
+        float shade = std::max(0.0f, n.z);
+
+        triangle(clip_verts.transpose(), uvs, vp, model, zbuffer, framebuffer);
     }
 }
 
@@ -82,32 +133,6 @@ mat<4,4,float> lookAt(const Vec3f& eye, const Vec3f& target, const Vec3f& up) {
     rot.set_col(3, {0.0f, 0.0f, 0.0f, 1.0f});
 
     return rot.invert() * t;
-}
-
-void rasterize(Model &model, Matrix &projection, Matrix &view, Matrix &modelworld, Matrix &vp, float zbuffer[250000], TGAImage &framebuffer)
-{
-    for (int i = 0; i < model.nfaces(); i++)
-    {
-        auto vert_ids = model.face(i);
-        Vec3f object_verts[3];
-        Vec4f clip_verts[3];
-        Vec3f ndc_verts[3];
-        Vec3f screen_verts[3];
-        for (int j = 0; j < 3; j++)
-        {
-            object_verts[j] = model.vert(vert_ids[j]);
-            clip_verts[j] = projection * view * modelworld * embed<4>(object_verts[j]);
-            ndc_verts[j] = proj<3>(clip_verts[j] / clip_verts[j][3]);
-            screen_verts[j] = proj<3>(vp * embed<4>(ndc_verts[j]));
-        }
-
-        // calculate normal
-        Vec3f n = cross((ndc_verts[1] - ndc_verts[0]),
-                        (ndc_verts[2] - ndc_verts[0]))
-                      .normalize();
-        float shade = std::max(0.0f, n.z);
-        triangle(screen_verts, TGAColor(255 * shade, 255 * shade, 255 * shade, 255), zbuffer, framebuffer);
-    }
 }
 
 int main() {
