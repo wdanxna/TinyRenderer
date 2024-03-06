@@ -139,19 +139,20 @@ class Gouraud : public Shader {
 public:
     //uniforms
     mat<4,4,float> u_mvp;
+    mat<4,4,float> u_norm;
     Vec3f u_lightDir;
 
     //varyings
     mat<3,3,float> varying_normals;
 
-    Gouraud(mat<4,4,float> mvp, Vec3f lightDir) 
-    : u_mvp{mvp}, u_lightDir{lightDir} {};
+    Gouraud(mat<4,4,float> mvp, mat<4,4,float> norm_m, Vec3f lightDir) 
+    : u_mvp{mvp}, u_norm{norm_m}, u_lightDir{lightDir} {};
 
     virtual Vec4f vertex(int iface, int nthvert) override {
         const auto& face = _model->face(iface);
         Vec3f obj_v = _model->vert(face[nthvert]);
         Vec3f obj_n = _model->normal(iface, nthvert);
-        varying_normals.set_col(nthvert, obj_n);
+        varying_normals.set_col(nthvert, proj<3>(u_norm * embed<4>(obj_n)));
 
         return u_mvp * embed<4>(obj_v);
     }
@@ -161,6 +162,54 @@ public:
         float intensity = std::max(0.0f, n*(u_lightDir*-1.0f).normalize());
         color = TGAColor(255 * intensity, 255 * intensity, 255 * intensity, 255);
     }
+};
+
+class Phong : public Shader {
+public:
+    //uniforms
+    mat<4,4,float> u_mvp;
+    mat<4,4,float> u_nm;
+    Vec3f u_lightDir;
+
+    //varyings
+    mat<3,3, float> varying_normals;
+    mat<2,3, float> varying_uvs;
+
+    Phong(mat<4,4,float> mvp, mat<4,4,float> nm, Vec3f lightDir)
+    : u_mvp{mvp}, u_nm{nm}, u_lightDir{lightDir} {}
+
+    virtual Vec4f vertex(int iface, int nthvert) override {
+        auto face = _model->face(iface);
+        auto obj_v = _model->vert(face[nthvert]);
+        auto obj_n = _model->normal(iface, nthvert);
+        auto uv = _model->uv(iface, nthvert);
+        varying_normals.set_col(nthvert, proj<3>(u_nm * embed<4>(obj_n)));
+        varying_uvs.set_col(nthvert, uv);
+        return u_mvp * embed<4>(obj_v);
+    }
+
+    virtual void fragment(Vec3f clip_bary, TGAColor& color) override {
+        Vec2f uv = varying_uvs * clip_bary;
+        Vec3f n = (varying_normals * clip_bary).normalize();
+        Vec3f l = (u_lightDir*-1).normalize();
+        
+        //ambient term
+        int ambient = 10;
+        //diffuse term
+        TGAColor c = _model->diffuse(uv);
+        float diffuse = std::max(0.0f, n*l);
+        //specular term
+        Vec3f r = (n*(2.0f*(l*n))-l).normalize();
+        float spec = std::powf(std::max(0.0f, r.z), 2);
+
+        color = TGAColor(
+            std::min(255, ambient + int(c[2]*diffuse) + int(c[2]*spec)),
+            std::min(255, ambient + int(c[1]*diffuse) + int(c[1]*spec)),
+            std::min(255, ambient + int(c[0]*diffuse) + int(c[0]*spec)),
+            255
+        );
+    }
+
 };
 
 int main() {
@@ -185,13 +234,13 @@ int main() {
     }
 
     Model head("../res/african_head.obj");
-    Gouraud gouraud(projection*view*modelworld, {0.2f, -0.3f, -1.0f});
-    gouraud._model = &head;
-    rasterize(gouraud, projection, view, modelworld, vp, zbuffer, framebuffer);
+    Phong shader(projection*view*modelworld, (view*modelworld).invert_transpose(), {0.2f, -0.3f, -1.0f});
+    shader._model = &head;
+    rasterize(shader, projection, view, modelworld, vp, zbuffer, framebuffer);
 
     Model floor("../res/floor.obj");
-    gouraud._model = &floor;
-    rasterize(gouraud, projection, view, modelworld, vp, zbuffer, framebuffer);
+    shader._model = &floor;
+    rasterize(shader, projection, view, modelworld, vp, zbuffer, framebuffer);
 
     //zbuffer visualization
     for (int x = 0; x < width; x++) {
