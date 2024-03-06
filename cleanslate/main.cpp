@@ -174,6 +174,7 @@ public:
     //varyings
     mat<3,3, float> varying_normals;
     mat<2,3, float> varying_uvs;
+    mat<3,3,float> varying_pos;
 
     Phong(mat<4,4,float> mvp, mat<4,4,float> nm, Vec3f lightDir)
     : u_mvp{mvp}, u_nm{nm}, u_lightDir{lightDir} {}
@@ -183,9 +184,11 @@ public:
         auto obj_v = _model->vert(face[nthvert]);
         auto obj_n = _model->normal(iface, nthvert);
         auto uv = _model->uv(iface, nthvert);
+        auto clip_v = u_mvp * embed<4>(obj_v);
         varying_normals.set_col(nthvert, proj<3>(u_nm * embed<4>(obj_n)));
         varying_uvs.set_col(nthvert, uv);
-        return u_mvp * embed<4>(obj_v);
+        varying_pos[nthvert] = proj<3>(clip_v);
+        return clip_v;
     }
 
     virtual void fragment(Vec3f clip_bary, TGAColor& color) override {
@@ -193,14 +196,35 @@ public:
         Vec3f n = (varying_normals * clip_bary).normalize();
         Vec3f l = (u_lightDir*-1).normalize();
         
+        //calculate tangent space
+        mat<3,3,float> A;
+        A[0] = varying_pos[1] - varying_pos[0];
+        A[1] = varying_pos[2] - varying_pos[0];
+        A[2] = n;
+        
+        auto AI = A.invert();
+        Vec3f i = AI * Vec3f{varying_uvs[0][1] - varying_uvs[0][0],
+                              varying_uvs[0][2] - varying_uvs[0][0],
+                              0.0f};
+        Vec3f j = AI * Vec3f{varying_uvs[1][1] - varying_uvs[1][0],
+                              varying_uvs[1][2] - varying_uvs[1][0],
+                              0.0f};
+
+        mat<3,3,float> tangent;
+        tangent.set_col(0, i.normalize());
+        tangent.set_col(1, j.normalize());
+        tangent.set_col(2, n);
+
+        n = (tangent * _model->normal(uv));
+        
         //ambient term
         int ambient = 10;
         //diffuse term
         TGAColor c = _model->diffuse(uv);
-        float diffuse = std::max(0.0f, n*l);
+        float diffuse = std::max(0.0f, n*l) * 1.2f;
         //specular term
         Vec3f r = (n*(2.0f*(l*n))-l).normalize();
-        float spec = std::powf(std::max(0.0f, r.z), 2);
+        float spec = std::powf(std::max(0.0f, r.z), 4) * 0.6f;
 
         color = TGAColor(
             std::min(255, ambient + int(c[2]*diffuse) + int(c[2]*spec)),
