@@ -196,7 +196,7 @@ public:
         Vec3f n = (varying_normals * clip_bary).normalize();
         Vec3f l = (u_lightDir*-1).normalize();
         
-        //calculate tangent space
+        //calculate tangent space normal
         mat<3,3,float> A;
         A[0] = varying_pos[1] - varying_pos[0];
         A[1] = varying_pos[2] - varying_pos[0];
@@ -224,7 +224,7 @@ public:
         float diffuse = std::max(0.0f, n*l) * 1.2f;
         //specular term
         Vec3f r = (n*(2.0f*(l*n))-l).normalize();
-        float spec = std::powf(std::max(0.0f, r.z), 4) * 0.6f;
+        float spec = std::powf(std::max(0.0f, r.z), std::max(1.0f, _model->specular(uv))) * 1.0f;
 
         color = TGAColor(
             std::min(255, ambient + int(c[2]*diffuse) + int(c[2]*spec)),
