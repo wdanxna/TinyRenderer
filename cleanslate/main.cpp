@@ -91,15 +91,12 @@ void triangle(
             //derive clip space barycentric from screen space barycentric
             auto clip_bary = Vec3f{ screen_bary.x/cv[0][3], screen_bary.y/cv[1][3], screen_bary.z/cv[2][3]};
             clip_bary = clip_bary / (clip_bary[0] + clip_bary[1] + clip_bary[2]);
-
-            TGAColor color;
-            shader.fragment(clip_bary, color);
-
-            //shift z to prevent cutoff
-            float frag_depth = (clip_verts * clip_bary)[2] / 4.0f + 1.0f;
+            float frag_depth = (clip_verts * clip_bary)[2];
 
             if (zbuffer[x + y * width] < frag_depth) {
                 zbuffer[x + y * width] = frag_depth;
+                TGAColor color;
+                shader.fragment(clip_bary, color);
                 out.set(x, y, color);
             }
         }
@@ -108,10 +105,7 @@ void triangle(
 
 void rasterize(
     Shader& shader,
-    Matrix &projection, 
-    Matrix &view, 
-    Matrix &modelworld, 
-    Matrix &vp, 
+    const Matrix &vp, 
     float* zbuffer, 
     TGAImage &framebuffer)
 {
@@ -168,16 +162,19 @@ class Phong : public Shader {
 public:
     //uniforms
     mat<4,4,float> u_mvp;
-    mat<4,4,float> u_nm;
-    Vec3f u_lightDir;
+    mat<4,4,float> u_nm;//normal matrix
+    mat<4,4,float> u_sm;//shadow matrix, transform from clip space to shadow space
+    Vec3f u_lightPos, u_lightLookat;
+
+    float* u_shadowmap;
 
     //varyings
     mat<3,3, float> varying_normals;
     mat<2,3, float> varying_uvs;
     mat<3,3,float> varying_pos;
 
-    Phong(mat<4,4,float> mvp, mat<4,4,float> nm, Vec3f lightDir)
-    : u_mvp{mvp}, u_nm{nm}, u_lightDir{lightDir} {}
+    Phong(mat<4,4,float> mvp, mat<4,4,float> nm, mat<4,4,float> sm, Vec3f lightPos, Vec3f lightLookat)
+    : u_mvp{mvp}, u_nm{nm}, u_sm{sm}, u_lightPos{lightPos}, u_lightLookat{lightLookat} {}
 
     virtual Vec4f vertex(int iface, int nthvert) override {
         auto face = _model->face(iface);
@@ -194,7 +191,8 @@ public:
     virtual void fragment(Vec3f clip_bary, TGAColor& color) override {
         Vec2f uv = varying_uvs * clip_bary;
         Vec3f n = (varying_normals * clip_bary).normalize();
-        Vec3f l = (u_lightDir*-1).normalize();
+        Vec3f l = proj<3>(u_mvp * embed<4>(u_lightPos) - u_mvp * embed<4>(u_lightLookat)).normalize();
+        Vec3f v = varying_pos.transpose() * clip_bary;
         
         //calculate tangent space normal
         mat<3,3,float> A;
@@ -216,24 +214,57 @@ public:
         tangent.set_col(2, n);
 
         n = (tangent * _model->normal(uv));
+
+        auto sv = u_sm * embed<4>(v);
+        sv = sv / sv[3];
+        auto sx = int((sv[0]+1.0f)/2.0f * width + 0.5f);
+        auto sy = int((sv[1]+1.0f)/2.0f * height + 0.5f);
+        float shadow = 1.0f;
+        if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
+            float shadow_val = u_shadowmap[sx + sy * width];
+            float shadow_z = sv[2];
+            shadow = 0.3f + 0.7f * (shadow_val < shadow_z+0.02);
+        }
+        // shadow = 1.0f;
         
         //ambient term
-        int ambient = 10;
+        float ambient = 0.1f;
         //diffuse term
         TGAColor c = _model->diffuse(uv);
-        float diffuse = std::max(0.0f, n*l) * 1.2f;
+        float diffuse = std::max(0.0f, n*l) * 1.8f;
         //specular term
         Vec3f r = (n*(2.0f*(l*n))-l).normalize();
         float spec = std::powf(std::max(0.0f, r.z), std::max(1.0f, _model->specular(uv))) * 1.0f;
 
         color = TGAColor(
-            std::min(255, ambient + int(c[2]*diffuse) + int(c[2]*spec)),
-            std::min(255, ambient + int(c[1]*diffuse) + int(c[1]*spec)),
-            std::min(255, ambient + int(c[0]*diffuse) + int(c[0]*spec)),
+            std::min(255, int(c[2]*ambient) + int(c[2]*diffuse*shadow) + int(c[2]*spec*shadow)),
+            std::min(255, int(c[1]*ambient) + int(c[1]*diffuse*shadow) + int(c[1]*spec*shadow)),
+            std::min(255, int(c[0]*ambient) + int(c[0]*diffuse*shadow) + int(c[0]*spec*shadow)),
             255
         );
     }
 
+};
+
+class Shadow : public Shader {
+public:
+    mat<4,4,float> u_mvp;
+
+    mat<4,3,float> varying_pos;
+    Shadow(mat<4,4,float> mvp) : u_mvp{mvp} {}
+
+    virtual Vec4f vertex(int iface, int nthvert) override {
+        auto clip_v = u_mvp * embed<4>(_model->vert(iface, nthvert));
+        varying_pos.set_col(nthvert, clip_v);
+        return clip_v;
+    }
+
+    virtual void fragment(Vec3f clip_bary, TGAColor& color) override {
+        auto v = varying_pos * clip_bary;
+
+        color = TGAColor(255,255,255,255) * ((v[2]/v[3] + 3.0f)/6.0f);
+        color[3] = 255;
+    }
 };
 
 int main() {
@@ -242,34 +273,70 @@ int main() {
     TGAImage zimg(width, height, TGAImage::RGBA);
 
     mat<4,4,float> modelworld = mat<4,4,float>::identity();
-    modelworld[0][3] = 0;//tx
-    modelworld[1][3] = 0.1;//ty
-    modelworld[2][3] = -0.3f;//tz
+    modelworld[0][0] = 0.9f;
+    modelworld[1][1] = 0.9f;
+    modelworld[2][2] = 0.9f;
+    modelworld[0][3] = 0.2;//tx
+    modelworld[1][3] = 0.0;//ty
+    modelworld[2][3] = 0.2f;//tz
 
-    Vec3f eye {0.2f/1.0f, 0.1f/1.0f, 0.5/1.0f};
+    mat<4,4,float> floor_modelworld = mat<4,4,float>::identity();
+    floor_modelworld[0][3] = 0;//tx
+    floor_modelworld[1][3] = 0.0;//ty
+    floor_modelworld[2][3] = -0.5f;//tz
+
+    Vec3f eye {0.07, 0.1f, 0.25f};
+    // Vec3f eye {0.5, 0.0f, 0.0f};
     mat<4,4,float> view = lookAt(eye, {0.0f, 0.0f, 0.001f}, {0.0f, 1.0f, 0.0f});
-
     mat<4,4,float> vp = viewport(width, height);
-    mat<4,4,float> projection = perspective(1.0f);
+    mat<4,4,float> projection = perspective(1.5f);
 
     float zbuffer[width*height];
-    for (int i = 0; i < width*height;i++) {
-        zbuffer[i] = std::numeric_limits<float>::min();
-    }
+    std::fill(zbuffer, zbuffer + (width * height), std::numeric_limits<float>::lowest());
 
-    Model head("../res/african_head.obj");
-    Phong shader(projection*view*modelworld, (view*modelworld).invert_transpose(), {0.2f, -0.3f, -1.0f});
-    shader._model = &head;
-    rasterize(shader, projection, view, modelworld, vp, zbuffer, framebuffer);
-
+    Model head("../res/diablo3_pose.obj");
     Model floor("../res/floor.obj");
+
+    //shadow pass
+    TGAImage shadowimg(width, height, TGAImage::RGBA);
+    float shadowmap[width*height];
+    std::fill(shadowmap, shadowmap + (width * height), std::numeric_limits<float>::lowest());
+    Vec3f light_pos {0.5f, 0.5f, 0.5f};
+    Vec3f light_lookat {0.0f, 0.0f, 0.0f};
+    mat<4,4,float> light_view = lookAt(light_pos, light_lookat, {0.0f, 1.0f, 0.0f});
+    Shadow shadow(light_view * modelworld);
+    shadow._model = &head;
+    rasterize(shadow, vp, shadowmap, shadowimg);
+
+    shadow.u_mvp = light_view * floor_modelworld;
+    shadow._model = &floor;
+    rasterize(shadow, vp, shadowmap, shadowimg);
+    shadowimg.flip_vertically();
+    shadowimg.write_tga_file("shadowmap.tga");
+
+
+    //color pass
+    Phong shader(
+        projection*view*modelworld, 
+        (view*modelworld).invert_transpose(), 
+        light_view * modelworld * (view*modelworld).invert(), 
+        light_pos,
+        light_lookat);
+
+    shader.u_shadowmap = shadowmap;
+    shader._model = &head;
+    rasterize(shader, vp, zbuffer, framebuffer);
+
+    shader.u_mvp = projection*view*floor_modelworld;
+    shader.u_nm = (view*floor_modelworld).invert_transpose();
+    shader.u_sm = light_view * floor_modelworld * (view * floor_modelworld).invert();
     shader._model = &floor;
-    rasterize(shader, projection, view, modelworld, vp, zbuffer, framebuffer);
+    rasterize(shader, vp, zbuffer, framebuffer);
 
     //zbuffer visualization
     for (int x = 0; x < width; x++) {
         for (int y = 0; y < height; y++) {
-            zimg.set(x, y, TGAColor(255,255,255,255) * zbuffer[x + y*width]);
+            zimg.set(x, y, TGAColor(255,255,255,255) * ((zbuffer[x + y*width] + 3.0f)/6.0f));
         }
     }
     zimg.flip_vertically();
