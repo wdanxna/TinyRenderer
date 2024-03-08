@@ -52,6 +52,7 @@ Vec3f barycentric(mat<3,2,float> v, Vec2f p) {
 
     auto i = cross(Vec3f(p0p1.x, p0p2.x, pp0.x), 
                    Vec3f(p0p1.y, p0p2.y, pp0.y));
+    if (i.z < 1e-2) return {-1,1,1};
     i = i / i.z;
     return Vec3f(1.0-i.x-i.y, i.x, i.y);
 }
@@ -267,6 +268,90 @@ public:
     }
 };
 
+class AoImage : public Shader {
+public:
+    mat<4,4,float> u_mvp;
+    float* u_zbuffer;
+    TGAImage* u_occlu;
+
+    mat<4,3,float> varying_pos;
+    mat<2, 3, float> varying_uvs;
+
+    AoImage(mat<4,4,float> mvp, float* zbuffer, TGAImage* occlu) 
+        : u_mvp{mvp}, u_zbuffer{zbuffer}, u_occlu{occlu} {}
+
+    virtual Vec4f vertex(int iface, int nthvert) override {
+        auto clip_v = u_mvp * embed<4>(_model->vert(iface, nthvert));
+        varying_pos.set_col(nthvert, clip_v);
+        varying_uvs.set_col(nthvert, _model->uv(iface, nthvert));
+        return clip_v;
+    }
+
+    virtual void fragment(Vec3f clip_bary, TGAColor& color) override {
+        auto v = varying_pos * clip_bary;
+        auto uv = varying_uvs * clip_bary;
+        
+        auto sx = int((v[0]/v[3]+1.0f)/2.0f * width + 0.5f);
+        auto sy = int((v[1]/v[3]+1.0f)/2.0f * height + 0.5f);
+        if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
+            float z = u_zbuffer[sx + sy * width];
+            if ((v[2]/v[3]) >= z) {
+                u_occlu->set(uv.x*width, uv.y*height, TGAColor(255));
+            }
+        }
+        // color = TGAColor(255,255,255,255) * ((v[2]/v[3] + 3.0f)/6.0f);
+        // color[3] = 255;
+    }
+};
+
+Vec3f rand_point_on_unit_sphere() {
+    float u = (float)rand()/(float)RAND_MAX;
+    float v = (float)rand()/(float)RAND_MAX;
+    float theta = 2.f*M_PI*u;
+    float phi   = acos(2.f*v - 1.f);
+    return Vec3f(sin(phi)*cos(theta), sin(phi)*sin(theta), cos(phi));
+}
+
+void make_aoimage(Model& model, TGAImage& aoimage) {
+    const int samples = 1000;
+    float* zbuff = new float[width*height];
+    float* shadow = new float[width*height];
+    TGAImage tmp(width, height, TGAImage::RGB);
+    TGAImage ao_tmp(width, height, TGAImage::RGB);
+    srand(time(0));
+    for (int iter = 1; iter <= samples; iter++) {
+        auto p = rand_point_on_unit_sphere();
+        auto view = lookAt(p, {0,0,0.01}, {0.0, 1.0, 0.0});
+        auto vp = viewport(width, height);
+        std::fill(zbuff, zbuff + (width * height), std::numeric_limits<float>::lowest());
+        std::fill(zbuff, shadow + (width * height), std::numeric_limits<float>::lowest());
+        //first pass, get z buffer
+        Shadow zshader(view);
+        zshader._model = &model;
+        rasterize(zshader, vp, shadow, tmp);
+        //visual debug
+        // tmp.flip_vertically();
+        // tmp.write_tga_file("tmp.tga");
+
+        //second pass, generate aoimage
+        AoImage aoshader(view, shadow, &ao_tmp);
+        aoshader._model = &model;
+        rasterize(aoshader, vp, zbuff, tmp);
+
+        for (int i = 0; i < width; i++) {
+            for (int j = 0; j < height; j++) {
+                float prev = aoimage.get(i, j)[0];
+                float cur = ao_tmp.get(i, j)[0];
+                TGAColor c((prev*(iter-1)+cur)/(float)iter+.5f);
+                aoimage.set(i,j, c);
+            }
+        }
+    }
+
+    delete[] zbuff;
+    delete[] shadow;
+}
+
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
@@ -282,7 +367,7 @@ int main() {
 
     mat<4,4,float> floor_modelworld = mat<4,4,float>::identity();
     floor_modelworld[0][3] = 0;//tx
-    floor_modelworld[1][3] = 0.0;//ty
+    floor_modelworld[1][3] = 0.15;//ty
     floor_modelworld[2][3] = -0.5f;//tz
 
     Vec3f eye {0.07, 0.1f, 0.25f};
@@ -296,6 +381,11 @@ int main() {
 
     Model head("../res/diablo3_pose.obj");
     Model floor("../res/floor.obj");
+
+    TGAImage aoimage(width, height, TGAImage::RGB);
+    make_aoimage(head, aoimage);
+    aoimage.flip_vertically();
+    aoimage.write_tga_file("ao.tga");
 
     //shadow pass
     TGAImage shadowimg(width, height, TGAImage::RGBA);
