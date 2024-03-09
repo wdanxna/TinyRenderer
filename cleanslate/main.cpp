@@ -69,6 +69,8 @@ void triangle(
     mat<4,3,float> clip_verts,
     mat<4,4,float> viewport_matrix,
     float* zbuffer, TGAImage& out) {
+    const int width = out.get_width();
+    const int height = out.get_height();
     mat<3,4,float> cv = clip_verts.transpose();
     mat<3,2,float> sv;
     for (int i = 0; i < 3; i++) {
@@ -168,6 +170,7 @@ public:
     Vec3f u_lightPos, u_lightLookat;
 
     float* u_shadowmap;
+    TGAImage* u_aomap;
 
     //varyings
     mat<3,3, float> varying_normals;
@@ -229,7 +232,12 @@ public:
         // shadow = 1.0f;
         
         //ambient term
-        float ambient = 0.1f;
+        float ambient = 0.5f;
+        float occlu = 1.0f;
+        if (u_aomap) {
+            occlu = u_aomap->get(uv.x*u_aomap->get_width(), uv.y*u_aomap->get_height())[0] / 255.0f;
+            ambient *= occlu;
+        }
         //diffuse term
         TGAColor c = _model->diffuse(uv);
         float diffuse = std::max(0.0f, n*l) * 1.8f;
@@ -275,7 +283,7 @@ public:
     TGAImage* u_occlu;
 
     mat<4,3,float> varying_pos;
-    mat<2, 3, float> varying_uvs;
+    mat<2,3, float> varying_uvs;
 
     AoImage(mat<4,4,float> mvp, float* zbuffer, TGAImage* occlu) 
         : u_mvp{mvp}, u_zbuffer{zbuffer}, u_occlu{occlu} {}
@@ -295,8 +303,10 @@ public:
         auto sy = int((v[1]/v[3]+1.0f)/2.0f * height + 0.5f);
         if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
             float z = u_zbuffer[sx + sy * width];
-            if ((v[2]/v[3]) >= z) {
-                u_occlu->set(uv.x*width, uv.y*height, TGAColor(255));
+            if ((v[2]/v[3]) - z >= 0.0f) {
+                u_occlu->set(
+                    uv.x*u_occlu->get_width(), 
+                    uv.y*u_occlu->get_height(), TGAColor(255));
             }
         }
         // color = TGAColor(255,255,255,255) * ((v[2]/v[3] + 3.0f)/6.0f);
@@ -313,14 +323,19 @@ Vec3f rand_point_on_unit_sphere() {
 }
 
 void make_aoimage(Model& model, TGAImage& aoimage) {
+    const int ao_width = aoimage.get_width();
+    const int ao_height = aoimage.get_height();
     const int samples = 1000;
-    float* zbuff = new float[width*height];
-    float* shadow = new float[width*height];
+    float* zbuff = new float[ao_width*ao_height];
+    float* shadow = new float[ao_width*ao_height];
     TGAImage tmp(width, height, TGAImage::RGB);
-    TGAImage ao_tmp(width, height, TGAImage::RGB);
+    TGAImage ao_tmp(ao_width, ao_height, TGAImage::RGB);
+    TGAImage ao_fb(ao_width, ao_height, TGAImage::RGB);
     srand(time(0));
     for (int iter = 1; iter <= samples; iter++) {
+        tmp.clear();
         auto p = rand_point_on_unit_sphere();
+        p.y = std::abs(p.y);
         auto view = lookAt(p, {0,0,0.01}, {0.0, 1.0, 0.0});
         auto vp = viewport(width, height);
         std::fill(zbuff, zbuff + (width * height), std::numeric_limits<float>::lowest());
@@ -334,15 +349,18 @@ void make_aoimage(Model& model, TGAImage& aoimage) {
         // tmp.write_tga_file("tmp.tga");
 
         //second pass, generate aoimage
+        vp = viewport(ao_width, ao_height);
         AoImage aoshader(view, shadow, &ao_tmp);
         aoshader._model = &model;
-        rasterize(aoshader, vp, zbuff, tmp);
+        std::fill(zbuff, zbuff + (ao_width * ao_height), std::numeric_limits<float>::lowest());
+        rasterize(aoshader, vp, zbuff, ao_fb);
 
-        for (int i = 0; i < width; i++) {
-            for (int j = 0; j < height; j++) {
+        for (int i = 0; i < ao_width; i++) {
+            for (int j = 0; j < ao_height; j++) {
                 float prev = aoimage.get(i, j)[0];
                 float cur = ao_tmp.get(i, j)[0];
-                TGAColor c((prev*(iter-1)+cur)/(float)iter+.5f);
+                float t = (prev*(iter-1)+cur*0.5)/(float)iter;
+                TGAColor c(t,t,t);
                 aoimage.set(i,j, c);
             }
         }
@@ -382,10 +400,10 @@ int main() {
     Model head("../res/diablo3_pose.obj");
     Model floor("../res/floor.obj");
 
-    TGAImage aoimage(width, height, TGAImage::RGB);
-    make_aoimage(head, aoimage);
-    aoimage.flip_vertically();
-    aoimage.write_tga_file("ao.tga");
+    // TGAImage *aoimage = new TGAImage(1024, 1024, TGAImage::RGB);
+    // make_aoimage(head, *aoimage);
+    // aoimage->flip_vertically();
+    // aoimage->write_tga_file("ao2.tga");
 
     //shadow pass
     TGAImage shadowimg(width, height, TGAImage::RGBA);
@@ -415,12 +433,18 @@ int main() {
 
     shader.u_shadowmap = shadowmap;
     shader._model = &head;
+    TGAImage *ao = new TGAImage();
+    ao->read_tga_file("./ao2.tga");
+    ao->flip_vertically();
+    shader.u_aomap = ao;
     rasterize(shader, vp, zbuffer, framebuffer);
+    delete ao;
 
     shader.u_mvp = projection*view*floor_modelworld;
     shader.u_nm = (view*floor_modelworld).invert_transpose();
     shader.u_sm = light_view * floor_modelworld * (view * floor_modelworld).invert();
     shader._model = &floor;
+    shader.u_aomap = nullptr;
     rasterize(shader, vp, zbuffer, framebuffer);
 
     //zbuffer visualization
