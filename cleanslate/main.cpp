@@ -370,6 +370,20 @@ void make_aoimage(Model& model, TGAImage& aoimage) {
     delete[] shadow;
 }
 
+float max_elevation_angle(float *zbuffer, Vec2f p, Vec2f dir) {
+    float maxangle = 0;
+    for (float step = 0.0f; step < 100; step+=1.0f) {
+        Vec2f sample = p + dir*step;
+        if (sample.x >= width || sample.y >= height || sample.x < 0 || sample.y < 0) break;
+        float dist = (sample-p).norm();
+        if (dist < 1.0) continue;
+        float elevation = zbuffer[int(sample.x) + int(sample.y)*width] - zbuffer[int(p.x) + int(p.y)*width];
+        if (elevation > 0.22) elevation = 0;
+        maxangle = std::max(maxangle, atanf(elevation / dist));
+    }
+    return maxangle;
+}
+
 int main() {
 
     TGAImage framebuffer(width, height, TGAImage::RGBA);
@@ -423,7 +437,37 @@ int main() {
     shadowimg.write_tga_file("shadowmap.tga");
 
 
-    //color pass
+    //SSAO
+    TGAImage ssao_frame(width, height, TGAImage::RGB);
+    {
+        //depth pass
+        Shadow zshader(projection*view*modelworld);
+        zshader._model = &head;
+        rasterize(zshader, vp, zbuffer, shadowimg);
+        zshader.u_mvp = projection*view*floor_modelworld;
+        zshader._model = &floor;
+        rasterize(zshader, vp, zbuffer, shadowimg);
+
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                if (zbuffer[x + y * width] < -1e5) continue;
+                float total = 0;
+                for (float a = 0; a < M_PI*2 - 1e-4; a += M_PI_4) {
+                    //8 direction
+                    float u = M_PI*2 + (float)rand()/(float)RAND_MAX;
+                    total += M_PI_2 - max_elevation_angle(zbuffer, {(float)x, (float)y}, {cos(a+u), sin(a+u)});
+                }
+                total /= M_PI_2 * 8;
+                total = powf(total, 100.f);
+                ssao_frame.set(x, y, TGAColor(total * 255, total * 255, total * 255));
+            }
+        }
+        ssao_frame.flip_vertically();
+        ssao_frame.write_tga_file("ssao.tga");
+    }
+
+    std::fill(zbuffer, zbuffer + (width * height), std::numeric_limits<float>::lowest());
+    //light pass
     Phong shader(
         projection*view*modelworld, 
         (view*modelworld).invert_transpose(), 
@@ -434,7 +478,7 @@ int main() {
     shader.u_shadowmap = shadowmap;
     shader._model = &head;
     TGAImage *ao = new TGAImage();
-    ao->read_tga_file("./ao2.tga");
+    ao->read_tga_file("./ssao.tga");
     ao->flip_vertically();
     shader.u_aomap = ao;
     rasterize(shader, vp, zbuffer, framebuffer);
