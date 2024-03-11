@@ -175,7 +175,7 @@ public:
     //varyings
     mat<3,3, float> varying_normals;
     mat<2,3, float> varying_uvs;
-    mat<3,3,float> varying_pos;
+    mat<3,4,float> varying_pos;
 
     Phong(mat<4,4,float> mvp, mat<4,4,float> nm, mat<4,4,float> sm, Vec3f lightPos, Vec3f lightLookat)
     : u_mvp{mvp}, u_nm{nm}, u_sm{sm}, u_lightPos{lightPos}, u_lightLookat{lightLookat} {}
@@ -188,7 +188,7 @@ public:
         auto clip_v = u_mvp * embed<4>(obj_v);
         varying_normals.set_col(nthvert, proj<3>(u_nm * embed<4>(obj_n)));
         varying_uvs.set_col(nthvert, uv);
-        varying_pos[nthvert] = proj<3>(clip_v);
+        varying_pos[nthvert] = clip_v;
         return clip_v;
     }
 
@@ -196,12 +196,12 @@ public:
         Vec2f uv = varying_uvs * clip_bary;
         Vec3f n = (varying_normals * clip_bary).normalize();
         Vec3f l = proj<3>(u_mvp * embed<4>(u_lightPos) - u_mvp * embed<4>(u_lightLookat)).normalize();
-        Vec3f v = varying_pos.transpose() * clip_bary;
+        Vec4f v = varying_pos.transpose() * clip_bary;
         
         //calculate tangent space normal
         mat<3,3,float> A;
-        A[0] = varying_pos[1] - varying_pos[0];
-        A[1] = varying_pos[2] - varying_pos[0];
+        A[0] = proj<3>(varying_pos[1] - varying_pos[0]);
+        A[1] = proj<3>(varying_pos[2] - varying_pos[0]);
         A[2] = n;
         
         auto AI = A.invert();
@@ -219,7 +219,7 @@ public:
 
         n = (tangent * _model->normal(uv));
 
-        auto sv = u_sm * embed<4>(v);
+        auto sv = u_sm * embed<4>(proj<3>(v));
         sv = sv / sv[3];
         auto sx = int((sv[0]+1.0f)/2.0f * width + 0.5f);
         auto sy = int((sv[1]+1.0f)/2.0f * height + 0.5f);
@@ -235,12 +235,12 @@ public:
         float ambient = 0.5f;
         float occlu = 1.0f;
         if (u_aomap) {
-            occlu = u_aomap->get(uv.x*u_aomap->get_width(), uv.y*u_aomap->get_height())[0] / 255.0f;
+            occlu = u_aomap->get((v[0]/v[3]+1.0f)/2.0f*u_aomap->get_width()+0.5f, (v[1]/v[3]+1.0f)/2.0f*u_aomap->get_height()+0.5f)[0] / 255.0f;
             ambient *= occlu;
         }
         //diffuse term
         TGAColor c = _model->diffuse(uv);
-        float diffuse = std::max(0.0f, n*l) * 1.8f;
+        float diffuse = std::max(0.0f, n*l) * 1.0f * occlu;
         //specular term
         Vec3f r = (n*(2.0f*(l*n))-l).normalize();
         float spec = std::powf(std::max(0.0f, r.z), std::max(1.0f, _model->specular(uv))) * 1.0f;
@@ -390,11 +390,11 @@ int main() {
     TGAImage zimg(width, height, TGAImage::RGBA);
 
     mat<4,4,float> modelworld = mat<4,4,float>::identity();
-    modelworld[0][0] = 0.9f;
-    modelworld[1][1] = 0.9f;
-    modelworld[2][2] = 0.9f;
+    // modelworld[0][0] = 0.9f;
+    // modelworld[1][1] = 0.9f;
+    // modelworld[2][2] = 0.9f;
     modelworld[0][3] = 0.2;//tx
-    modelworld[1][3] = 0.0;//ty
+    modelworld[1][3] = 0.1;//ty
     modelworld[2][3] = 0.2f;//tz
 
     mat<4,4,float> floor_modelworld = mat<4,4,float>::identity();
@@ -482,14 +482,14 @@ int main() {
     ao->flip_vertically();
     shader.u_aomap = ao;
     rasterize(shader, vp, zbuffer, framebuffer);
-    delete ao;
+   
 
     shader.u_mvp = projection*view*floor_modelworld;
     shader.u_nm = (view*floor_modelworld).invert_transpose();
     shader.u_sm = light_view * floor_modelworld * (view * floor_modelworld).invert();
     shader._model = &floor;
-    shader.u_aomap = nullptr;
     rasterize(shader, vp, zbuffer, framebuffer);
+    delete ao;
 
     //zbuffer visualization
     for (int x = 0; x < width; x++) {
